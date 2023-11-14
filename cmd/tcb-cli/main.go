@@ -29,7 +29,7 @@ type Manga struct {
 }
 
 type Chapter struct {
-	Url       string
+	URL       string
 	Number    float64
 	Title     string
 	ImageURLs []string
@@ -82,7 +82,7 @@ func getChapters(baseURL string, manga Manga) ([]Chapter, error) {
 		folder = filepath.Join(manga.Title, fmt.Sprintf("%g %s", number, title))
 
 		chapters = append(chapters, Chapter{
-			Url:    url,
+			URL:    url,
 			Number: number,
 			Title:  title,
 			Folder: folder,
@@ -105,7 +105,7 @@ func getImageURLs(baseURL string, chapter Chapter) ([]string, error) {
 		imageURLs = append(imageURLs, e.Attr("src"))
 	})
 
-	err := c.Visit(baseURL + chapter.Url)
+	err := c.Visit(baseURL + chapter.URL)
 	if err != nil {
 		return nil, err
 	}
