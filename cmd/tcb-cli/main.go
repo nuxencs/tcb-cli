@@ -78,8 +78,7 @@ func getChapters(baseURL string, manga Manga) ([]Chapter, error) {
 			log.Fatalf("error getting chapter number: %q", err)
 		}
 
-		title = strings.TrimSpace(e.ChildText("div.text-gray-500"))
-		title = getCleanChapterTitle(title)
+		title = getCleanChapterTitle(e.ChildText("div.text-gray-500"))
 		folder = filepath.Join(manga.Title, fmt.Sprintf("%g %s", number, title))
 
 		chapters = append(chapters, Chapter{
@@ -175,6 +174,9 @@ func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Mang
 func getCleanChapterTitle(title string) string {
 	// Compile the regex pattern
 	r := regexp.MustCompile(`[<>:"/\\|?*]`)
+
+	// Trim spaces
+	title = strings.TrimSpace(title)
 
 	// Remove illegal chars
 	title = r.ReplaceAllString(title, "")
