@@ -142,7 +142,7 @@ func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Mang
 
 	var wg sync.WaitGroup
 	totalImages := int64(len(chapter.ImageURLs))
-	var chapterName = strings.TrimSpace(fmt.Sprintf("Chapter %g %s", chapter.Number, chapter.Title))
+	var chapterName = fmt.Sprintf("Chapter %g %s", chapter.Number, chapter.Title)
 	bar := p.AddBar(totalImages,
 		mpb.PrependDecorators(
 			decor.Name(chapterName),
