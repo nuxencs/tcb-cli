@@ -199,7 +199,7 @@ func getChapterNumber(name string) (float64, error) {
 		if err != nil {
 			return 0, err
 		}
-		return number, err
+		return number, nil
 	}
 	return 0, err
 }
