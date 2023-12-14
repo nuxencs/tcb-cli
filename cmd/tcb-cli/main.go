@@ -62,24 +62,20 @@ func getMangas(baseURL string) ([]Manga, error) {
 
 func getChapters(baseURL string, manga Manga) ([]Chapter, error) {
 	var chapters []Chapter
-	var url string
-	var name string
-	var title string
-	var folder string
 
 	c := colly.NewCollector()
 
 	c.OnHTML("a.block.border.border-border.bg-card.mb-3.p-3.rounded", func(e *colly.HTMLElement) {
-		url = e.Attr("href")
+		url := e.Attr("href")
 
-		name = strings.TrimSpace(e.ChildText("div.text-lg.font-bold"))
+		name := strings.TrimSpace(e.ChildText("div.text-lg.font-bold"))
 		number, err := getChapterNumber(name)
 		if err != nil {
 			log.Fatalf("error getting chapter number: %q", err)
 		}
 
-		title = getCleanChapterTitle(e.ChildText("div.text-gray-500"))
-		folder = filepath.Join(manga.Title, fmt.Sprintf("%g %s", number, title))
+		title := getCleanChapterTitle(e.ChildText("div.text-gray-500"))
+		folder := filepath.Join(manga.Title, fmt.Sprintf("%g %s", number, title))
 
 		chapters = append(chapters, Chapter{
 			URL:    url,
