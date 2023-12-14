@@ -255,10 +255,13 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 	for {
 		fmt.Print("Select chapters\n>> ")
 		var input string
-		_, err := fmt.Scanln(&input)
+		if _, err := fmt.Scan(&input); err != nil {
+			fmt.Println("Error reading input. Please try again.")
+			continue
+		}
 		chapterNumbers, err := parseChapterSelection(input, availableChapters)
 		if err != nil {
-			fmt.Printf("Error parsing selection: %s. Please try again.\n", err.Error())
+			fmt.Printf("Error parsing selection: %q. Please try again.\n", err)
 			continue
 		}
 
