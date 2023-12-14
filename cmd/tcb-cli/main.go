@@ -128,7 +128,7 @@ func downloadImage(url, filename string) error {
 	return nil
 }
 
-func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Manga, chapter Chapter) error {
+func downloadImages(wg *sync.WaitGroup, p *mpb.Progress, selectedDownloadLocation string, manga Manga, chapter Chapter) error {
 	dirPath := filepath.Join(selectedDownloadLocation, manga.Title, fmt.Sprintf("%03g %s", chapter.Number, chapter.Title))
 	dirPath = strings.TrimSpace(dirPath)
 	err := os.MkdirAll(dirPath, os.ModePerm)
@@ -136,10 +136,8 @@ func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Mang
 		return err
 	}
 
-	var wg sync.WaitGroup
-	totalImages := int64(len(chapter.ImageURLs))
 	var chapterName = fmt.Sprintf("Chapter %g %s", chapter.Number, chapter.Title)
-	bar := p.AddBar(totalImages,
+	bar := p.AddBar(int64(len(chapter.ImageURLs)),
 		mpb.PrependDecorators(
 			decor.Name(chapterName),
 			decor.CountersNoUnit(" %d / %d"),
@@ -151,6 +149,7 @@ func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Mang
 
 	for i, imageURL := range chapter.ImageURLs {
 		wg.Add(1)
+
 		go func(i int, imageURL string) {
 			defer wg.Done()
 			extension := filepath.Ext(imageURL)
@@ -162,8 +161,6 @@ func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Mang
 			bar.Increment()
 		}(i, imageURL)
 	}
-	wg.Wait()
-	p.Wait()
 	return nil
 }
 
@@ -330,11 +327,10 @@ func parseChapterSelection(input string, availableChapters []float64) ([]float64
 
 func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Manga, selectedChaptersList []Chapter) {
 	var wg sync.WaitGroup
-	p := mpb.New()
+	p := mpb.New(mpb.WithWaitGroup(&wg))
 
 	for _, selectedChapter := range selectedChaptersList {
-		wg.Add(1) // Increment the WaitGroup counter
-
+		wg.Add(1)
 		go func(chapter Chapter) { // Start a new goroutine for each chapter
 			defer wg.Done() // Decrement the counter when the goroutine completes
 
@@ -344,14 +340,14 @@ func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Man
 			}
 			chapter.ImageURLs = selectedChapterImageURLs
 
-			err = downloadImages(p, selectedDownloadLocation, selectedManga, chapter)
+			err = downloadImages(&wg, p, selectedDownloadLocation, selectedManga, chapter)
 			if err != nil {
 				log.Fatalf("error downloading chapter %g: %q", chapter.Number, err)
 			}
 		}(selectedChapter)
 	}
 
-	wg.Wait() // Wait for all goroutines to finish
+	p.Wait() // Wait for all goroutines to finish
 }
 
 func main() {
