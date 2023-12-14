@@ -312,17 +312,10 @@ func parseChapterSelection(input string, availableChapters []float64) ([]float64
 	}
 
 	// Remove duplicates and sort
-	uniqueMap := make(map[float64]bool)
-	var uniqueResult []float64
-	for _, chapter := range result {
-		if !uniqueMap[chapter] {
-			uniqueMap[chapter] = true
-			uniqueResult = append(uniqueResult, chapter)
-		}
-	}
-	sort.Float64s(uniqueResult)
+	result = dedupeSlice(result)
+	sort.Float64s(result)
 
-	return uniqueResult, nil
+	return result, nil
 }
 
 func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Manga, selectedChaptersList []Chapter) {
@@ -348,6 +341,18 @@ func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Man
 	}
 
 	p.Wait() // Wait for all goroutines to finish
+}
+
+func dedupeSlice[T comparable](s []T) []T {
+	inResult := make(map[T]bool)
+	var result []T
+	for _, str := range s {
+		if _, ok := inResult[str]; !ok {
+			inResult[str] = true
+			result = append(result, str)
+		}
+	}
+	return result
 }
 
 func main() {
