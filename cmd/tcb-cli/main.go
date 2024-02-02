@@ -29,7 +29,7 @@ type Manga struct {
 }
 
 type Chapter struct {
-	Url       string
+	URL       string
 	Number    float64
 	Title     string
 	ImageURLs []string
@@ -62,28 +62,23 @@ func getMangas(baseURL string) ([]Manga, error) {
 
 func getChapters(baseURL string, manga Manga) ([]Chapter, error) {
 	var chapters []Chapter
-	var url string
-	var name string
-	var title string
-	var folder string
 
 	c := colly.NewCollector()
 
 	c.OnHTML("a.block.border.border-border.bg-card.mb-3.p-3.rounded", func(e *colly.HTMLElement) {
-		url = e.Attr("href")
+		url := e.Attr("href")
 
-		name = strings.TrimSpace(e.ChildText("div.text-lg.font-bold"))
+		name := strings.TrimSpace(e.ChildText("div.text-lg.font-bold"))
 		number, err := getChapterNumber(name)
 		if err != nil {
 			log.Fatalf("error getting chapter number: %q", err)
 		}
 
-		title = strings.TrimSpace(e.ChildText("div.text-gray-500"))
-		title = getCleanChapterTitle(title)
-		folder = filepath.Join(manga.Title, fmt.Sprintf("%g %s", number, title))
+		title := getCleanChapterTitle(e.ChildText("div.text-gray-500"))
+		folder := filepath.Join(manga.Title, fmt.Sprintf("%g %s", number, title))
 
 		chapters = append(chapters, Chapter{
-			Url:    url,
+			URL:    url,
 			Number: number,
 			Title:  title,
 			Folder: folder,
@@ -106,7 +101,7 @@ func getImageURLs(baseURL string, chapter Chapter) ([]string, error) {
 		imageURLs = append(imageURLs, e.Attr("src"))
 	})
 
-	err := c.Visit(baseURL + chapter.Url)
+	err := c.Visit(baseURL + chapter.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +128,7 @@ func downloadImage(url, filename string) error {
 	return nil
 }
 
-func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Manga, chapter Chapter) error {
+func downloadImages(wg *sync.WaitGroup, p *mpb.Progress, selectedDownloadLocation string, manga Manga, chapter Chapter) error {
 	dirPath := filepath.Join(selectedDownloadLocation, manga.Title, fmt.Sprintf("%03g %s", chapter.Number, chapter.Title))
 	dirPath = strings.TrimSpace(dirPath)
 	err := os.MkdirAll(dirPath, os.ModePerm)
@@ -141,10 +136,8 @@ func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Mang
 		return err
 	}
 
-	var wg sync.WaitGroup
-	totalImages := int64(len(chapter.ImageURLs))
-	var chapterName = strings.TrimSpace(fmt.Sprintf("Chapter %g %s", chapter.Number, chapter.Title))
-	bar := p.AddBar(totalImages,
+	var chapterName = fmt.Sprintf("Chapter %g %s", chapter.Number, chapter.Title)
+	bar := p.AddBar(int64(len(chapter.ImageURLs)),
 		mpb.PrependDecorators(
 			decor.Name(chapterName),
 			decor.CountersNoUnit(" %d / %d"),
@@ -156,6 +149,7 @@ func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Mang
 
 	for i, imageURL := range chapter.ImageURLs {
 		wg.Add(1)
+
 		go func(i int, imageURL string) {
 			defer wg.Done()
 			extension := filepath.Ext(imageURL)
@@ -167,14 +161,15 @@ func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Mang
 			bar.Increment()
 		}(i, imageURL)
 	}
-	wg.Wait()
-	p.Wait()
 	return nil
 }
 
 func getCleanChapterTitle(title string) string {
 	// Compile the regex pattern
 	r := regexp.MustCompile(`[<>:"/\\|?*]`)
+
+	// Trim spaces & dots
+	title = strings.Trim(title, " .")
 
 	// Remove illegal chars
 	title = r.ReplaceAllString(title, "")
@@ -197,7 +192,7 @@ func getChapterNumber(name string) (float64, error) {
 		if err != nil {
 			return 0, err
 		}
-		return number, err
+		return number, nil
 	}
 	return 0, err
 }
@@ -257,10 +252,13 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 	for {
 		fmt.Print("Select chapters\n>> ")
 		var input string
-		_, err := fmt.Scanln(&input)
+		if _, err := fmt.Scan(&input); err != nil {
+			fmt.Println("Error reading input. Please try again.")
+			continue
+		}
 		chapterNumbers, err := parseChapterSelection(input, availableChapters)
 		if err != nil {
-			fmt.Printf("Error parsing selection: %s. Please try again.\n", err.Error())
+			fmt.Printf("Error parsing selection: %q. Please try again.\n", err)
 			continue
 		}
 
@@ -314,26 +312,18 @@ func parseChapterSelection(input string, availableChapters []float64) ([]float64
 	}
 
 	// Remove duplicates and sort
-	uniqueMap := make(map[float64]bool)
-	var uniqueResult []float64
-	for _, chapter := range result {
-		if !uniqueMap[chapter] {
-			uniqueMap[chapter] = true
-			uniqueResult = append(uniqueResult, chapter)
-		}
-	}
-	sort.Float64s(uniqueResult)
+	result = dedupeSlice(result)
+	sort.Float64s(result)
 
-	return uniqueResult, nil
+	return result, nil
 }
 
 func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Manga, selectedChaptersList []Chapter) {
 	var wg sync.WaitGroup
-	p := mpb.New()
+	p := mpb.New(mpb.WithWaitGroup(&wg))
 
 	for _, selectedChapter := range selectedChaptersList {
-		wg.Add(1) // Increment the WaitGroup counter
-
+		wg.Add(1)
 		go func(chapter Chapter) { // Start a new goroutine for each chapter
 			defer wg.Done() // Decrement the counter when the goroutine completes
 
@@ -343,14 +333,26 @@ func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Man
 			}
 			chapter.ImageURLs = selectedChapterImageURLs
 
-			err = downloadImages(p, selectedDownloadLocation, selectedManga, chapter)
+			err = downloadImages(&wg, p, selectedDownloadLocation, selectedManga, chapter)
 			if err != nil {
 				log.Fatalf("error downloading chapter %g: %q", chapter.Number, err)
 			}
 		}(selectedChapter)
 	}
 
-	wg.Wait() // Wait for all goroutines to finish
+	p.Wait() // Wait for all goroutines to finish
+}
+
+func dedupeSlice[T comparable](s []T) []T {
+	inResult := make(map[T]bool)
+	var result []T
+	for _, str := range s {
+		if _, ok := inResult[str]; !ok {
+			inResult[str] = true
+			result = append(result, str)
+		}
+	}
+	return result
 }
 
 func main() {
