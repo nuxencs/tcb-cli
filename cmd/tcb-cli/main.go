@@ -169,7 +169,7 @@ func getCleanChapterTitle(title string) string {
 	r := regexp.MustCompile(`[<>:"/\\|?*]`)
 
 	// Trim spaces
-	title = strings.TrimSpace(title)
+	title = strings.Trim(title, " .")
 
 	// Remove illegal chars
 	title = r.ReplaceAllString(title, "")
