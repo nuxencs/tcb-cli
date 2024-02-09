@@ -19,6 +19,8 @@ import (
 	"github.com/gocolly/colly"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
+
+	"golang.org/x/exp/slices"
 )
 
 const BaseUrl = "https://tcbscans.com"
@@ -235,16 +237,16 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 	var selectedChapters []Chapter
 	var availableChapters []float64
 
-	chapters, err := getChapters(BaseUrl, selectedManga)
+	allChapters, err := getChapters(BaseUrl, selectedManga)
 	if err != nil {
 		return nil, err
 	}
 
-	sort.SliceStable(chapters, func(i, j int) bool {
-		return chapters[i].Number < chapters[j].Number
+	sort.SliceStable(allChapters, func(i, j int) bool {
+		return allChapters[i].Number < allChapters[j].Number
 	})
 
-	for _, chapter := range chapters {
+	for _, chapter := range allChapters {
 		fmt.Printf("(Chapter %g) %s\n", chapter.Number, chapter.Title)
 		availableChapters = append(availableChapters, chapter.Number)
 	}
@@ -262,12 +264,9 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 			continue
 		}
 
-		for _, number := range chapterNumbers {
-			for _, chapter := range chapters {
-				if chapter.Number == number {
-					selectedChapters = append(selectedChapters, chapter)
-					break
-				}
+		for _, chapter := range allChapters {
+			if slices.Contains(chapterNumbers, chapter.Number) {
+				selectedChapters = append(selectedChapters, chapter)
 			}
 		}
 		if len(selectedChapters) > 0 {
@@ -279,8 +278,8 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 }
 
 func parseChapterSelection(input string, availableChapters []float64) ([]float64, error) {
-	var result []float64
 	parts := strings.Split(input, ",")
+	chapterMap := make(map[float64]bool)
 
 	for _, part := range parts {
 		if strings.Contains(part, "-") {
@@ -288,34 +287,52 @@ func parseChapterSelection(input string, availableChapters []float64) ([]float64
 			if len(rangeParts) != 2 {
 				return nil, fmt.Errorf("invalid range format: %s", part)
 			}
-			start, err := strconv.ParseFloat(strings.TrimSpace(rangeParts[0]), 64)
-			if err != nil {
-				return nil, err
-			}
-			end, err := strconv.ParseFloat(strings.TrimSpace(rangeParts[1]), 64)
+			start, end, err := parseRange(rangeParts)
 			if err != nil {
 				return nil, err
 			}
 
-			for _, availableChapter := range availableChapters {
-				if availableChapter >= start && availableChapter <= end {
-					result = append(result, availableChapter)
+			for _, chapter := range availableChapters {
+				if chapter >= start && chapter <= end {
+					chapterMap[chapter] = true
 				}
 			}
 		} else {
-			singleChapter, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
+			chapter, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
 			if err != nil {
 				return nil, err
 			}
-			result = append(result, singleChapter)
+			chapterMap[chapter] = true
 		}
 	}
 
-	// Remove duplicates and sort
-	result = dedupeSlice(result)
-	sort.Float64s(result)
+	return mapToSlice(chapterMap), nil
+}
 
-	return result, nil
+func parseRange(rangeParts []string) (float64, float64, error) {
+	start, err := strconv.ParseFloat(strings.TrimSpace(rangeParts[0]), 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid start of range: %s", rangeParts[0])
+	}
+	end, err := strconv.ParseFloat(strings.TrimSpace(rangeParts[1]), 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid end of range: %s", rangeParts[1])
+	}
+
+	if start > end {
+		return 0, 0, fmt.Errorf("start of range should not be greater than end: %s-%s", rangeParts[0], rangeParts[1])
+	}
+
+	return start, end, nil
+}
+
+func mapToSlice(chapterMap map[float64]bool) []float64 {
+	var result []float64
+	for chapter := range chapterMap {
+		result = append(result, chapter)
+	}
+	sort.Float64s(result)
+	return result
 }
 
 func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Manga, selectedChaptersList []Chapter) {
@@ -341,18 +358,6 @@ func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Man
 	}
 
 	p.Wait() // Wait for all goroutines to finish
-}
-
-func dedupeSlice[T comparable](s []T) []T {
-	inResult := make(map[T]bool)
-	var result []T
-	for _, str := range s {
-		if _, ok := inResult[str]; !ok {
-			inResult[str] = true
-			result = append(result, str)
-		}
-	}
-	return result
 }
 
 func main() {

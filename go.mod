@@ -5,6 +5,7 @@ go 1.20
 require (
 	github.com/gocolly/colly v1.2.0
 	github.com/vbauerster/mpb/v8 v8.6.1
+	golang.org/x/exp v0.0.0-20240205201215-2c58cdc269a3
 )
 
 require (
