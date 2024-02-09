@@ -19,8 +19,6 @@ import (
 	"github.com/gocolly/colly"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
-
-	"golang.org/x/exp/slices"
 )
 
 const BaseUrl = "https://tcbscans.com"
@@ -215,7 +213,9 @@ func downloadLocationSelection() (string, error) {
 }
 
 func mangaSelection(mangas []Manga) (Manga, error) {
+	mangaMap := make(map[int]Manga)
 	for i, manga := range mangas {
+		mangaMap[i+1] = manga
 		fmt.Printf("(%d) %s\n", i+1, manga.Title)
 	}
 
@@ -226,17 +226,14 @@ func mangaSelection(mangas []Manga) (Manga, error) {
 			fmt.Println("Error reading input. Please try again.")
 			continue
 		}
-		if selectedManga >= 1 && selectedManga <= len(mangas) {
-			return mangas[selectedManga-1], nil
+		if manga, ok := mangaMap[selectedManga]; ok {
+			return manga, nil
 		}
 		fmt.Println("Invalid selection. Please select a valid manga.")
 	}
 }
 
 func chapterSelection(selectedManga Manga) ([]Chapter, error) {
-	var selectedChapters []Chapter
-	var availableChapters []float64
-
 	allChapters, err := getChapters(BaseUrl, selectedManga)
 	if err != nil {
 		return nil, err
@@ -246,35 +243,46 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 		return allChapters[i].Number < allChapters[j].Number
 	})
 
+	// Create a map for easy access to chapters by number
+	chapterMap := make(map[float64]Chapter)
 	for _, chapter := range allChapters {
+		chapterMap[chapter.Number] = chapter
 		fmt.Printf("(Chapter %g) %s\n", chapter.Number, chapter.Title)
-		availableChapters = append(availableChapters, chapter.Number)
 	}
 
-	for {
-		fmt.Print("Select chapters\n>> ")
-		var input string
-		if _, err := fmt.Scan(&input); err != nil {
-			fmt.Println("Error reading input. Please try again.")
-			continue
-		}
-		chapterNumbers, err := parseChapterSelection(input, availableChapters)
-		if err != nil {
-			fmt.Printf("Error parsing selection: %q. Please try again.\n", err)
-			continue
-		}
-
-		for _, chapter := range allChapters {
-			if slices.Contains(chapterNumbers, chapter.Number) {
-				selectedChapters = append(selectedChapters, chapter)
-			}
-		}
-		if len(selectedChapters) > 0 {
-			break
-		}
-		fmt.Println("Invalid selection. Please select valid chapters.")
+	chapterNumbers, err := getUserChapterSelection(allChapters)
+	if err != nil {
+		return nil, err
 	}
-	return selectedChapters, nil
+
+	return getSelectedChapters(chapterNumbers, chapterMap), nil
+}
+
+func getUserChapterSelection(chapters []Chapter) ([]float64, error) {
+	fmt.Print("Select chapters\n>> ")
+	var input string
+	if _, err := fmt.Scan(&input); err != nil {
+		return nil, fmt.Errorf("error reading input: %q", err)
+	}
+	return parseChapterSelection(input, getChapterNumbers(chapters))
+}
+
+func getChapterNumbers(chapters []Chapter) []float64 {
+	var numbers []float64
+	for _, chapter := range chapters {
+		numbers = append(numbers, chapter.Number)
+	}
+	return numbers
+}
+
+func getSelectedChapters(selectedNumbers []float64, chapterMap map[float64]Chapter) []Chapter {
+	var selectedChapters []Chapter
+	for _, num := range selectedNumbers {
+		if chapter, ok := chapterMap[num]; ok {
+			selectedChapters = append(selectedChapters, chapter)
+		}
+	}
+	return selectedChapters
 }
 
 func parseChapterSelection(input string, availableChapters []float64) ([]float64, error) {
