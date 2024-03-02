@@ -38,14 +38,12 @@ type Chapter struct {
 
 func getMangas(baseURL string) ([]Manga, error) {
 	var mangas []Manga
-	var url string
-	var name string
 
 	c := colly.NewCollector()
 
 	c.OnHTML("div.bg-card.border.border-border.rounded.p-3.mb-3", func(e *colly.HTMLElement) {
-		url = e.ChildAttr("a", "href")
-		name = e.ChildAttr("img", "alt")
+		url := e.ChildAttr("a", "href")
+		name := e.ChildAttr("img", "alt")
 
 		mangas = append(mangas, Manga{
 			URL:   url,
@@ -57,6 +55,7 @@ func getMangas(baseURL string) ([]Manga, error) {
 	if err != nil {
 		return []Manga{}, err
 	}
+
 	return mangas, nil
 }
 
@@ -89,6 +88,7 @@ func getChapters(baseURL string, manga Manga) ([]Chapter, error) {
 	if err != nil {
 		return []Chapter{}, err
 	}
+
 	return chapters, nil
 }
 
@@ -105,6 +105,7 @@ func getImageURLs(baseURL string, chapter Chapter) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return imageURLs, nil
 }
 
@@ -136,7 +137,7 @@ func downloadImages(wg *sync.WaitGroup, p *mpb.Progress, selectedDownloadLocatio
 		return err
 	}
 
-	var chapterName = fmt.Sprintf("Chapter %g %s", chapter.Number, chapter.Title)
+	var chapterName = fmt.Sprintf("(%g) %s", chapter.Number, chapter.Title)
 	bar := p.AddBar(int64(len(chapter.ImageURLs)),
 		mpb.PrependDecorators(
 			decor.Name(chapterName),
@@ -247,7 +248,7 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 	chapterMap := make(map[float64]Chapter)
 	for _, chapter := range allChapters {
 		chapterMap[chapter.Number] = chapter
-		fmt.Printf("(Chapter %g) %s\n", chapter.Number, chapter.Title)
+		fmt.Printf("(%g) %s\n", chapter.Number, chapter.Title)
 	}
 
 	chapterNumbers, err := getUserChapterSelection(allChapters)
