@@ -38,14 +38,12 @@ type Chapter struct {
 
 func getMangas(baseURL string) ([]Manga, error) {
 	var mangas []Manga
-	var url string
-	var name string
 
 	c := colly.NewCollector()
 
 	c.OnHTML("div.bg-card.border.border-border.rounded.p-3.mb-3", func(e *colly.HTMLElement) {
-		url = e.ChildAttr("a", "href")
-		name = e.ChildAttr("img", "alt")
+		url := e.ChildAttr("a", "href")
+		name := e.ChildAttr("img", "alt")
 
 		mangas = append(mangas, Manga{
 			URL:   url,
@@ -57,6 +55,7 @@ func getMangas(baseURL string) ([]Manga, error) {
 	if err != nil {
 		return []Manga{}, err
 	}
+
 	return mangas, nil
 }
 
@@ -89,6 +88,7 @@ func getChapters(baseURL string, manga Manga) ([]Chapter, error) {
 	if err != nil {
 		return []Chapter{}, err
 	}
+
 	return chapters, nil
 }
 
@@ -105,6 +105,7 @@ func getImageURLs(baseURL string, chapter Chapter) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return imageURLs, nil
 }
 
@@ -136,7 +137,7 @@ func downloadImages(wg *sync.WaitGroup, p *mpb.Progress, selectedDownloadLocatio
 		return err
 	}
 
-	var chapterName = fmt.Sprintf("Chapter %g %s", chapter.Number, chapter.Title)
+	var chapterName = fmt.Sprintf("(%g) %s", chapter.Number, chapter.Title)
 	bar := p.AddBar(int64(len(chapter.ImageURLs)),
 		mpb.PrependDecorators(
 			decor.Name(chapterName),
@@ -213,7 +214,9 @@ func downloadLocationSelection() (string, error) {
 }
 
 func mangaSelection(mangas []Manga) (Manga, error) {
+	mangaMap := make(map[int]Manga)
 	for i, manga := range mangas {
+		mangaMap[i+1] = manga
 		fmt.Printf("(%d) %s\n", i+1, manga.Title)
 	}
 
@@ -224,63 +227,68 @@ func mangaSelection(mangas []Manga) (Manga, error) {
 			fmt.Println("Error reading input. Please try again.")
 			continue
 		}
-		if selectedManga >= 1 && selectedManga <= len(mangas) {
-			return mangas[selectedManga-1], nil
+		if manga, ok := mangaMap[selectedManga]; ok {
+			return manga, nil
 		}
 		fmt.Println("Invalid selection. Please select a valid manga.")
 	}
 }
 
 func chapterSelection(selectedManga Manga) ([]Chapter, error) {
-	var selectedChapters []Chapter
-	var availableChapters []float64
-
-	chapters, err := getChapters(BaseUrl, selectedManga)
+	allChapters, err := getChapters(BaseUrl, selectedManga)
 	if err != nil {
 		return nil, err
 	}
 
-	sort.SliceStable(chapters, func(i, j int) bool {
-		return chapters[i].Number < chapters[j].Number
+	sort.SliceStable(allChapters, func(i, j int) bool {
+		return allChapters[i].Number < allChapters[j].Number
 	})
 
+	// Create a map for easy access to chapters by number
+	chapterMap := make(map[float64]Chapter)
+	for _, chapter := range allChapters {
+		chapterMap[chapter.Number] = chapter
+		fmt.Printf("(%g) %s\n", chapter.Number, chapter.Title)
+	}
+
+	chapterNumbers, err := getUserChapterSelection(allChapters)
+	if err != nil {
+		return nil, err
+	}
+
+	return getSelectedChapters(chapterNumbers, chapterMap), nil
+}
+
+func getUserChapterSelection(chapters []Chapter) ([]float64, error) {
+	fmt.Print("Select chapters\n>> ")
+	var input string
+	if _, err := fmt.Scan(&input); err != nil {
+		return nil, fmt.Errorf("error reading input: %q", err)
+	}
+	return parseChapterSelection(input, getChapterNumbers(chapters))
+}
+
+func getChapterNumbers(chapters []Chapter) []float64 {
+	var numbers []float64
 	for _, chapter := range chapters {
-		fmt.Printf("(Chapter %g) %s\n", chapter.Number, chapter.Title)
-		availableChapters = append(availableChapters, chapter.Number)
+		numbers = append(numbers, chapter.Number)
 	}
+	return numbers
+}
 
-	for {
-		fmt.Print("Select chapters\n>> ")
-		var input string
-		if _, err := fmt.Scan(&input); err != nil {
-			fmt.Println("Error reading input. Please try again.")
-			continue
+func getSelectedChapters(selectedNumbers []float64, chapterMap map[float64]Chapter) []Chapter {
+	var selectedChapters []Chapter
+	for _, num := range selectedNumbers {
+		if chapter, ok := chapterMap[num]; ok {
+			selectedChapters = append(selectedChapters, chapter)
 		}
-		chapterNumbers, err := parseChapterSelection(input, availableChapters)
-		if err != nil {
-			fmt.Printf("Error parsing selection: %q. Please try again.\n", err)
-			continue
-		}
-
-		for _, number := range chapterNumbers {
-			for _, chapter := range chapters {
-				if chapter.Number == number {
-					selectedChapters = append(selectedChapters, chapter)
-					break
-				}
-			}
-		}
-		if len(selectedChapters) > 0 {
-			break
-		}
-		fmt.Println("Invalid selection. Please select valid chapters.")
 	}
-	return selectedChapters, nil
+	return selectedChapters
 }
 
 func parseChapterSelection(input string, availableChapters []float64) ([]float64, error) {
-	var result []float64
 	parts := strings.Split(input, ",")
+	chapterMap := make(map[float64]bool)
 
 	for _, part := range parts {
 		if strings.Contains(part, "-") {
@@ -288,34 +296,52 @@ func parseChapterSelection(input string, availableChapters []float64) ([]float64
 			if len(rangeParts) != 2 {
 				return nil, fmt.Errorf("invalid range format: %s", part)
 			}
-			start, err := strconv.ParseFloat(strings.TrimSpace(rangeParts[0]), 64)
-			if err != nil {
-				return nil, err
-			}
-			end, err := strconv.ParseFloat(strings.TrimSpace(rangeParts[1]), 64)
+			start, end, err := parseRange(rangeParts)
 			if err != nil {
 				return nil, err
 			}
 
-			for _, availableChapter := range availableChapters {
-				if availableChapter >= start && availableChapter <= end {
-					result = append(result, availableChapter)
+			for _, chapter := range availableChapters {
+				if chapter >= start && chapter <= end {
+					chapterMap[chapter] = true
 				}
 			}
 		} else {
-			singleChapter, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
+			chapter, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
 			if err != nil {
 				return nil, err
 			}
-			result = append(result, singleChapter)
+			chapterMap[chapter] = true
 		}
 	}
 
-	// Remove duplicates and sort
-	result = dedupeSlice(result)
-	sort.Float64s(result)
+	return mapToSlice(chapterMap), nil
+}
 
-	return result, nil
+func parseRange(rangeParts []string) (float64, float64, error) {
+	start, err := strconv.ParseFloat(strings.TrimSpace(rangeParts[0]), 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid start of range: %s", rangeParts[0])
+	}
+	end, err := strconv.ParseFloat(strings.TrimSpace(rangeParts[1]), 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid end of range: %s", rangeParts[1])
+	}
+
+	if start > end {
+		return 0, 0, fmt.Errorf("start of range should not be greater than end: %s-%s", rangeParts[0], rangeParts[1])
+	}
+
+	return start, end, nil
+}
+
+func mapToSlice(chapterMap map[float64]bool) []float64 {
+	var result []float64
+	for chapter := range chapterMap {
+		result = append(result, chapter)
+	}
+	sort.Float64s(result)
+	return result
 }
 
 func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Manga, selectedChaptersList []Chapter) {
@@ -341,18 +367,6 @@ func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Man
 	}
 
 	p.Wait() // Wait for all goroutines to finish
-}
-
-func dedupeSlice[T comparable](s []T) []T {
-	inResult := make(map[T]bool)
-	var result []T
-	for _, str := range s {
-		if _, ok := inResult[str]; !ok {
-			inResult[str] = true
-			result = append(result, str)
-		}
-	}
-	return result
 }
 
 func main() {

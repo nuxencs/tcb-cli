@@ -3,15 +3,19 @@ name: build
 on:
   push:
     branches:
-      - "master"
-      - "develop"
+      - 'master'
+      - 'develop'
     tags:
       - 'v*'
+    paths-ignore:
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - '**.md'
 
-permissions:
-  contents: write
-  packages: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   goreleaserbuild:
@@ -23,11 +27,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 1.20 is the last version to support Windows < 10, Server < 2016, and MacOS < 1.15.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.20.12'
+          go-version: '1.22.0'
           cache: true
 
       - name: Run GoReleaser build
