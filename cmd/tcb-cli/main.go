@@ -6,7 +6,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,12 +15,20 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fatih/color"
 	"github.com/gocolly/colly"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
 )
 
 const BaseUrl = "https://tcbscans.com"
+
+var (
+	blue       = color.New(color.FgBlue).Add(color.Bold)
+	yellow     = color.New(color.FgHiYellow)
+	yellowBold = color.New(color.FgHiYellow).Add(color.Bold)
+	red        = color.New(color.FgRed)
+)
 
 type Manga struct {
 	URL   string
@@ -70,7 +77,8 @@ func getChapters(baseURL string, manga Manga) ([]Chapter, error) {
 		name := strings.TrimSpace(e.ChildText("div.text-lg.font-bold"))
 		number, err := getChapterNumber(name)
 		if err != nil {
-			log.Fatalf("error getting chapter number: %q", err)
+			red.Printf("error getting chapter number: %q", err)
+			os.Exit(1)
 		}
 
 		title := getCleanChapterTitle(e.ChildText("div.text-gray-500"))
@@ -137,7 +145,7 @@ func downloadImages(wg *sync.WaitGroup, p *mpb.Progress, selectedDownloadLocatio
 		return err
 	}
 
-	var chapterName = fmt.Sprintf("(%g) %s", chapter.Number, chapter.Title)
+	var chapterName = color.HiGreenString("(%g) %s", chapter.Number, chapter.Title)
 	bar := p.AddBar(int64(len(chapter.ImageURLs)),
 		mpb.PrependDecorators(
 			decor.Name(chapterName),
@@ -157,7 +165,8 @@ func downloadImages(wg *sync.WaitGroup, p *mpb.Progress, selectedDownloadLocatio
 			filename := filepath.Join(dirPath, fmt.Sprintf("%03d%s", i+1, extension))
 			err = downloadImage(imageURL, filename)
 			if err != nil {
-				log.Fatalf("error downloading file: %q", err)
+				red.Printf("error downloading file: %q", err)
+				os.Exit(1)
 			}
 			bar.Increment()
 		}(i, imageURL)
@@ -200,16 +209,17 @@ func getChapterNumber(name string) (float64, error) {
 
 func downloadLocationSelection() (string, error) {
 	for {
-		fmt.Print("Select a download location\n>> ")
+		blue.Println("Select a download location")
+		fmt.Print(">> ")
 		var selectedDownloadLocation string
 		if _, err := fmt.Scan(&selectedDownloadLocation); err != nil {
-			fmt.Println("Error reading input. Please try again.")
+			red.Println("Error reading input. Please try again.")
 			continue
 		}
 		if _, err := os.Stat(selectedDownloadLocation); err == nil {
 			return selectedDownloadLocation, nil
 		}
-		fmt.Println("Invalid selection. Please select a valid location.")
+		red.Println("Invalid selection. Please select a valid location.")
 	}
 }
 
@@ -217,20 +227,22 @@ func mangaSelection(mangas []Manga) (Manga, error) {
 	mangaMap := make(map[int]Manga)
 	for i, manga := range mangas {
 		mangaMap[i+1] = manga
-		fmt.Printf("(%d) %s\n", i+1, manga.Title)
+		yellowBold.Printf("(%d) ", i+1)
+		yellow.Printf("%s\n", manga.Title)
 	}
 
 	var selectedManga int
 	for {
-		fmt.Print("Select a manga\n>> ")
+		blue.Println("Select a manga")
+		fmt.Print(">> ")
 		if _, err := fmt.Scan(&selectedManga); err != nil {
-			fmt.Println("Error reading input. Please try again.")
+			red.Println("Error reading input. Please try again.")
 			continue
 		}
 		if manga, ok := mangaMap[selectedManga]; ok {
 			return manga, nil
 		}
-		fmt.Println("Invalid selection. Please select a valid manga.")
+		red.Println("Invalid selection. Please select a valid manga.")
 	}
 }
 
@@ -248,7 +260,8 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 	chapterMap := make(map[float64]Chapter)
 	for _, chapter := range allChapters {
 		chapterMap[chapter.Number] = chapter
-		fmt.Printf("(%g) %s\n", chapter.Number, chapter.Title)
+		yellowBold.Printf("(%g) ", chapter.Number)
+		yellow.Printf("%s\n", chapter.Title)
 	}
 
 	chapterNumbers, err := getUserChapterSelection(allChapters)
@@ -260,7 +273,8 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 }
 
 func getUserChapterSelection(chapters []Chapter) ([]float64, error) {
-	fmt.Print("Select chapters\n>> ")
+	blue.Println("Select chapters")
+	fmt.Print(">> ")
 	var input string
 	if _, err := fmt.Scan(&input); err != nil {
 		return nil, fmt.Errorf("error reading input: %q", err)
@@ -355,13 +369,15 @@ func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Man
 
 			selectedChapterImageURLs, err := getImageURLs(BaseUrl, chapter)
 			if err != nil {
-				log.Fatalf("error getting image urls for Chapter %g: %q", chapter.Number, err)
+				red.Printf("error getting image urls for Chapter %g: %q", chapter.Number, err)
+				os.Exit(1)
 			}
 			chapter.ImageURLs = selectedChapterImageURLs
 
 			err = downloadImages(&wg, p, selectedDownloadLocation, selectedManga, chapter)
 			if err != nil {
-				log.Fatalf("error downloading chapter %g: %q", chapter.Number, err)
+				red.Printf("error downloading chapter %g: %q", chapter.Number, err)
+				os.Exit(1)
 			}
 		}(selectedChapter)
 	}
@@ -372,22 +388,26 @@ func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Man
 func main() {
 	selectedDownloadLocation, err := downloadLocationSelection()
 	if err != nil {
-		log.Fatalf("error selecting download location: %q", err)
+		red.Printf("error selecting download location: %q", err)
+		os.Exit(1)
 	}
 
 	mangas, err := getMangas(BaseUrl)
 	if err != nil {
-		log.Fatalf("error getting mangas: %q", err)
+		red.Printf("error getting mangas: %q", err)
+		os.Exit(1)
 	}
 
 	selectedManga, err := mangaSelection(mangas)
 	if err != nil {
-		log.Fatalf("error selecting manga: %q", err)
+		red.Printf("error selecting manga: %q", err)
+		os.Exit(1)
 	}
 
 	selectedChaptersList, err := chapterSelection(selectedManga)
 	if err != nil {
-		log.Fatalf("error selecting chapters: %q", err)
+		red.Printf("error selecting chapters: %q", err)
+		os.Exit(1)
 	}
 
 	downloadSelectedChapters(selectedDownloadLocation, selectedManga, selectedChaptersList)
