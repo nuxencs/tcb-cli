@@ -5,7 +5,6 @@ package main
 
 import (
 	"archive/zip"
-	"bufio"
 	"fmt"
 	"io"
 	"net/http"
@@ -304,17 +303,14 @@ func downloadLocationSelection() (string, error) {
 
 // promptForCbzCreation asks the user if they want to create a CBZ archive and handles invalid input
 func promptForCbzCreation() bool {
-	reader := bufio.NewReader(os.Stdin)
-
 	for {
 		blue.Println("Would you like a cbz archive to be created? (y/N)")
 		fmt.Print(">> ")
-		response, err := reader.ReadString('\n')
-		if err != nil {
+		var response string
+		if _, err := fmt.Scan(&response); err != nil {
 			red.Println("Error reading input. Please try again.")
 			continue
 		}
-
 		response = strings.ToLower(strings.TrimSpace(response))
 
 		switch response {
