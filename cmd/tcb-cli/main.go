@@ -4,6 +4,8 @@
 package main
 
 import (
+	"archive/zip"
+	"bufio"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,9 +27,11 @@ const BaseUrl = "https://tcbscans.com"
 
 var (
 	blue       = color.New(color.FgBlue).Add(color.Bold)
+	green      = color.New(color.FgHiGreen)
+	greenBold  = color.New(color.FgHiGreen).Add(color.Bold)
+	red        = color.New(color.FgRed)
 	yellow     = color.New(color.FgHiYellow)
 	yellowBold = color.New(color.FgHiYellow).Add(color.Bold)
-	red        = color.New(color.FgRed)
 )
 
 type Manga struct {
@@ -43,6 +47,7 @@ type Chapter struct {
 	Folder    string
 }
 
+// getMangas gets all mangas
 func getMangas(baseURL string) ([]Manga, error) {
 	var mangas []Manga
 
@@ -66,6 +71,7 @@ func getMangas(baseURL string) ([]Manga, error) {
 	return mangas, nil
 }
 
+// getChapters gets all chapters for a manga
 func getChapters(baseURL string, manga Manga) ([]Chapter, error) {
 	var chapters []Chapter
 
@@ -100,6 +106,7 @@ func getChapters(baseURL string, manga Manga) ([]Chapter, error) {
 	return chapters, nil
 }
 
+// getImageURLs gets all image urls for a chapter
 func getImageURLs(baseURL string, chapter Chapter) ([]string, error) {
 	var imageURLs []string
 
@@ -117,6 +124,7 @@ func getImageURLs(baseURL string, chapter Chapter) ([]string, error) {
 	return imageURLs, nil
 }
 
+// downloadImage downloads a single image
 func downloadImage(url, filename string) error {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -137,7 +145,10 @@ func downloadImage(url, filename string) error {
 	return nil
 }
 
-func downloadImages(wg *sync.WaitGroup, p *mpb.Progress, selectedDownloadLocation string, manga Manga, chapter Chapter) error {
+// downloadImages downloads all images from a selected chapter
+func downloadImages(p *mpb.Progress, selectedDownloadLocation string, manga Manga, chapter Chapter, createCbz bool) error {
+	var wg sync.WaitGroup
+
 	dirPath := filepath.Join(selectedDownloadLocation, manga.Title, fmt.Sprintf("%03g %s", chapter.Number, chapter.Title))
 	dirPath = strings.TrimSpace(dirPath)
 	err := os.MkdirAll(dirPath, os.ModePerm)
@@ -145,7 +156,7 @@ func downloadImages(wg *sync.WaitGroup, p *mpb.Progress, selectedDownloadLocatio
 		return err
 	}
 
-	var chapterName = color.HiGreenString("(%g) %s", chapter.Number, chapter.Title)
+	var chapterName = greenBold.Sprintf("(%g) ", chapter.Number) + green.Sprintf("%s", chapter.Title)
 	bar := p.AddBar(int64(len(chapter.ImageURLs)),
 		mpb.PrependDecorators(
 			decor.Name(chapterName),
@@ -171,9 +182,75 @@ func downloadImages(wg *sync.WaitGroup, p *mpb.Progress, selectedDownloadLocatio
 			bar.Increment()
 		}(i, imageURL)
 	}
+	wg.Wait()
+
+	if createCbz {
+		cbzFilename := filepath.Join(selectedDownloadLocation, manga.Title, fmt.Sprintf("%03g %s.cbz", chapter.Number, chapter.Title))
+		err = createCbzArchive(dirPath, cbzFilename)
+		if err != nil {
+			return err
+		}
+
+		// delete the image directory after creating the CBZ
+		err = os.RemoveAll(dirPath)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
+// addFileToZip creates a zip archive named cbzFilename and adds all files from sourceDir to it
+func createCbzArchive(sourceDir, cbzFilename string) error {
+	// Create a new zip archive
+	cbzFile, err := os.Create(cbzFilename)
+	if err != nil {
+		return err
+	}
+	defer cbzFile.Close()
+
+	zipWriter := zip.NewWriter(cbzFile)
+	defer func() {
+		if err := zipWriter.Close(); err != nil {
+			fmt.Println("Error closing zip writer:", err)
+		}
+	}()
+
+	// Walk through the directory and add files to the zip
+	err = filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return addFileToZip(zipWriter, path, info.Name())
+		}
+		return nil
+	})
+
+	return err
+}
+
+// addFileToZip adds a single file to the zip archive
+func addFileToZip(zipWriter *zip.Writer, filePath, fileName string) error {
+	fileToZip, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer fileToZip.Close()
+
+	// Create a writer for this file in the zip
+	writer, err := zipWriter.Create(fileName)
+	if err != nil {
+		return err
+	}
+
+	// Copy the file data to the zip
+	_, err = io.Copy(writer, fileToZip)
+	return err
+}
+
+// getCleanChapterTitle removes problematic characters from the chapter title
 func getCleanChapterTitle(title string) string {
 	// Compile the regex pattern
 	r := regexp.MustCompile(`[<>:"/\\|?*]`)
@@ -186,6 +263,7 @@ func getCleanChapterTitle(title string) string {
 	return title
 }
 
+// getChapterNumber gets the chapter number from the scraped chapter name
 func getChapterNumber(name string) (float64, error) {
 	var number float64
 
@@ -207,6 +285,7 @@ func getChapterNumber(name string) (float64, error) {
 	return 0, err
 }
 
+// downloadLocationSelection asks the user for a download location
 func downloadLocationSelection() (string, error) {
 	for {
 		blue.Println("Select a download location")
@@ -223,6 +302,33 @@ func downloadLocationSelection() (string, error) {
 	}
 }
 
+// promptForCbzCreation asks the user if they want to create a CBZ archive and handles invalid input
+func promptForCbzCreation() bool {
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		blue.Println("Would you like a cbz archive to be created? (y/N)")
+		fmt.Print(">> ")
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			red.Println("Error reading input. Please try again.")
+			continue
+		}
+
+		response = strings.ToLower(strings.TrimSpace(response))
+
+		switch response {
+		case "y", "yes":
+			return true
+		case "n", "no", "":
+			return false
+		default:
+			red.Println("Invalid input. Please enter 'y' for yes or 'n' for no.")
+		}
+	}
+}
+
+// mangaSelection asks the user to select a manga
 func mangaSelection(mangas []Manga) (Manga, error) {
 	mangaMap := make(map[int]Manga)
 	for i, manga := range mangas {
@@ -246,6 +352,7 @@ func mangaSelection(mangas []Manga) (Manga, error) {
 	}
 }
 
+// chapterSelection asks the user to select the chapters to download
 func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 	allChapters, err := getChapters(BaseUrl, selectedManga)
 	if err != nil {
@@ -272,6 +379,7 @@ func chapterSelection(selectedManga Manga) ([]Chapter, error) {
 	return getSelectedChapters(chapterNumbers, chapterMap), nil
 }
 
+// getUserChapterSelection asks the user to select a manga
 func getUserChapterSelection(chapters []Chapter) ([]float64, error) {
 	blue.Println("Select chapters")
 	fmt.Print(">> ")
@@ -282,6 +390,7 @@ func getUserChapterSelection(chapters []Chapter) ([]float64, error) {
 	return parseChapterSelection(input, getChapterNumbers(chapters))
 }
 
+// getChapterNumbers gets all chapter numbers from a provided chapter slice
 func getChapterNumbers(chapters []Chapter) []float64 {
 	var numbers []float64
 	for _, chapter := range chapters {
@@ -290,6 +399,7 @@ func getChapterNumbers(chapters []Chapter) []float64 {
 	return numbers
 }
 
+// getSelectedChapters gets selected chapters from the user selected chapter numbers
 func getSelectedChapters(selectedNumbers []float64, chapterMap map[float64]Chapter) []Chapter {
 	var selectedChapters []Chapter
 	for _, num := range selectedNumbers {
@@ -300,6 +410,7 @@ func getSelectedChapters(selectedNumbers []float64, chapterMap map[float64]Chapt
 	return selectedChapters
 }
 
+// parseChapterSelection parses the user input for ranges and parts
 func parseChapterSelection(input string, availableChapters []float64) ([]float64, error) {
 	parts := strings.Split(input, ",")
 	chapterMap := make(map[float64]bool)
@@ -332,6 +443,7 @@ func parseChapterSelection(input string, availableChapters []float64) ([]float64
 	return mapToSlice(chapterMap), nil
 }
 
+// parseRange parses the user input for chapter ranges
 func parseRange(rangeParts []string) (float64, float64, error) {
 	start, err := strconv.ParseFloat(strings.TrimSpace(rangeParts[0]), 64)
 	if err != nil {
@@ -349,6 +461,7 @@ func parseRange(rangeParts []string) (float64, float64, error) {
 	return start, end, nil
 }
 
+// mapToSlice converts a map to a sorted slice
 func mapToSlice(chapterMap map[float64]bool) []float64 {
 	var result []float64
 	for chapter := range chapterMap {
@@ -358,7 +471,8 @@ func mapToSlice(chapterMap map[float64]bool) []float64 {
 	return result
 }
 
-func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Manga, selectedChaptersList []Chapter) {
+// downloadSelectedChapters downloads user selected chapters
+func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Manga, selectedChaptersList []Chapter, createCbz bool) {
 	var wg sync.WaitGroup
 	p := mpb.New(mpb.WithWaitGroup(&wg))
 
@@ -374,7 +488,7 @@ func downloadSelectedChapters(selectedDownloadLocation string, selectedManga Man
 			}
 			chapter.ImageURLs = selectedChapterImageURLs
 
-			err = downloadImages(&wg, p, selectedDownloadLocation, selectedManga, chapter)
+			err = downloadImages(p, selectedDownloadLocation, selectedManga, chapter, createCbz)
 			if err != nil {
 				red.Printf("error downloading chapter %g: %q", chapter.Number, err)
 				os.Exit(1)
@@ -391,6 +505,8 @@ func main() {
 		red.Printf("error selecting download location: %q", err)
 		os.Exit(1)
 	}
+
+	createCbz := promptForCbzCreation()
 
 	mangas, err := getMangas(BaseUrl)
 	if err != nil {
@@ -410,5 +526,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	downloadSelectedChapters(selectedDownloadLocation, selectedManga, selectedChaptersList)
+	downloadSelectedChapters(selectedDownloadLocation, selectedManga, selectedChaptersList, createCbz)
 }
